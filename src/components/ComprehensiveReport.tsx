@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ScreeningCase } from '../types';
 import { useLanguage } from '../context/LanguageContext';
+import { useScreening } from '../context/ScreeningContext';
 import { LOGO_ASSET_PATH, getGradcamForCase } from '../services/sampleData';
-import { Printer, Download, ArrowLeft, ShieldCheck, AlertTriangle, CheckCircle, FileText } from 'lucide-react';
+import { CLINICAL_DISCLAIMER_TEXT, downloadClinicalPdfReport } from '../services/api';
+import { Printer, Download, ArrowLeft, AlertTriangle } from 'lucide-react';
 
 interface ComprehensiveReportProps {
   screeningCase: ScreeningCase;
@@ -14,6 +16,9 @@ export const ComprehensiveReport: React.FC<ComprehensiveReportProps> = ({
   onBack
 }) => {
   const { t, language } = useLanguage();
+  const { backendStatus } = useScreening();
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [pdfNotice, setPdfNotice] = useState<string | null>(null);
 
   const { patient, quality, aiResult, clinicianReview, followUps } = screeningCase;
 
@@ -22,6 +27,20 @@ export const ComprehensiveReport: React.FC<ComprehensiveReportProps> = ({
       window.print();
     } catch (err) {
       console.warn('Print not supported in current frame:', err);
+    }
+  };
+
+  const handleDownloadBackendPdf = async () => {
+    setIsDownloadingPdf(true);
+    setPdfNotice(null);
+    const result = await downloadClinicalPdfReport(screeningCase, language);
+    setIsDownloadingPdf(false);
+
+    if (result.ok) {
+      setPdfNotice(`Downloaded ${result.fileName} (ReportLab PDF + SQLite recorded).`);
+    } else {
+      setPdfNotice('Backend PDF service offline — opening browser Print / Save as PDF fallback.');
+      handlePrint();
     }
   };
 
@@ -59,14 +78,49 @@ export const ComprehensiveReport: React.FC<ComprehensiveReportProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`text-[11px] font-mono px-2 py-1 rounded border ${
+              backendStatus === 'online'
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : 'bg-slate-100 text-slate-600 border-slate-200'
+            }`}
+          >
+            {backendStatus === 'online' ? 'DB + ReportLab Online' : 'Offline Fallback Mode'}
+          </span>
+          <button
+            onClick={handleDownloadBackendPdf}
+            disabled={isDownloadingPdf}
+            className="print-keep flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-lg shadow-sm transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            {isDownloadingPdf ? 'Generating PDF...' : t.repPdfBtn}
+          </button>
           <button
             onClick={handlePrint}
             className="print-keep flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors"
           >
             <Printer className="w-4 h-4" />
-            {t.repPrintBtn} / {t.repPdfBtn}
+            {t.repPrintBtn}
           </button>
+        </div>
+      </div>
+
+      {pdfNotice && (
+        <div className="no-print bg-blue-50 border border-blue-200 text-blue-900 px-4 py-2.5 rounded-xl text-xs font-medium">
+          {pdfNotice}
+        </div>
+      )}
+
+      {/* Explicit Medical Disclaimer & AI vs Clinician Separation Notice */}
+      <div className="bg-rose-50/80 border border-rose-200 text-rose-950 px-4 py-3 rounded-xl text-xs flex items-start gap-2.5">
+        <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0 mt-0.5" />
+        <div>
+          <strong className="uppercase tracking-wide font-bold">{t.repSectionDisclaimer}: </strong>
+          <span>{t.repDisclaimerText || CLINICAL_DISCLAIMER_TEXT}</span>
+          <span className="block text-[11px] text-rose-800 mt-0.5 font-mono">
+            AI-generated screening scores &amp; Grad-CAM heatmaps (Decision Support) are recorded separately from Doctor-Confirmed Findings.
+          </span>
         </div>
       </div>
 

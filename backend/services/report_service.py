@@ -692,3 +692,24 @@ class ReportService:
         story.append(disclaimer_table)
 
         doc.build(story)
+
+
+def generate_screening_pdf(
+    *,
+    db_service: DatabaseService | None = None,
+    screening_id: str | None = None,
+    record: dict[str, Any] | None = None,
+    output_dir: str | Path | None = None,
+    output_path: str | Path | None = None,
+    language: str = "en",
+    persist_record: bool = True,
+) -> dict[str, Any]:
+    """Convenience helper wrapping ReportService.generate_pdf_report for API and CLI callers."""
+    service = ReportService(db_service=db_service, output_dir=output_dir)
+    return service.generate_pdf_report(
+        screening_id=screening_id,
+        record=record,
+        output_path=output_path,
+        language=language,
+        persist_record=persist_record,
+    )
