@@ -110,6 +110,8 @@ export interface AIAnalysisResult {
   recommendedFollowupWeeks: number;
   processingTimeMs: number;
   modelIdentifier: string;
+  disclaimer?: string;
+  isPrototypeOutput?: boolean;
 }
 
 export interface ClinicianReview {
@@ -146,6 +148,13 @@ export interface ScreeningCase {
   quality: QualityAssessment;
   aiResult: AIAnalysisResult;
   clinicianReview?: ClinicianReview;
+  referralInfo?: {
+    priority: string;
+    facilityName: string;
+    status: string;
+    dueDate?: string;
+    notes?: string;
+  };
   followUps: FollowUpItem[];
   smsSentHistory: {
     id: string;

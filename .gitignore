@@ -4,5 +4,28 @@ dist/
 coverage/
 .DS_Store
 *.log
-.env*
+
+# Environment files
+.env
+.env.*
+backend/.env
 !.env.example
+!backend/.env.example
+
+# Python & virtual environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploaded & generated artifacts
+backend/app/storage/uploads/*
+!backend/app/storage/uploads/.gitkeep
+backend/app/storage/reports/*
+!backend/app/storage/reports/.gitkeep

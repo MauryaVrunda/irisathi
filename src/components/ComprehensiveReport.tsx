@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ScreeningCase } from '../types';
 import { useLanguage } from '../context/LanguageContext';
+import { useScreening } from '../context/ScreeningContext';
 import { LOGO_ASSET_PATH, getGradcamForCase } from '../services/sampleData';
-import { Printer, Download, ArrowLeft, ShieldCheck, AlertTriangle, CheckCircle, FileText } from 'lucide-react';
+import { getPdfReportUrl } from '../services/api';
+import { Printer, Download, ArrowLeft } from 'lucide-react';
 
 interface ComprehensiveReportProps {
   screeningCase: ScreeningCase;
@@ -14,6 +16,9 @@ export const ComprehensiveReport: React.FC<ComprehensiveReportProps> = ({
   onBack
 }) => {
   const { t, language } = useLanguage();
+  const { backendStatus } = useScreening();
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [pdfNotice, setPdfNotice] = useState<string | null>(null);
 
   const { patient, quality, aiResult, clinicianReview, followUps } = screeningCase;
 
@@ -22,6 +27,30 @@ export const ComprehensiveReport: React.FC<ComprehensiveReportProps> = ({
       window.print();
     } catch (err) {
       console.warn('Print not supported in current frame:', err);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    setPdfNotice(null);
+    try {
+      const response = await fetch(getPdfReportUrl(screeningCase.id, language));
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${screeningCase.id}_clinical_report.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setPdfNotice('Backend PDF generator is offline. Use Print / Save as PDF fallback.');
+    } finally {
+      setDownloadingPdf(false);
     }
   };
 
@@ -59,10 +88,29 @@ export const ComprehensiveReport: React.FC<ComprehensiveReportProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {pdfNotice && (
+            <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded">
+              {pdfNotice}
+            </span>
+          )}
+          <button
+            onClick={handleDownloadPdf}
+            disabled={downloadingPdf}
+            className="print-keep flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 rounded-lg shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <Download className="w-4 h-4 text-emerald-700" />
+            <span>
+              {downloadingPdf
+                ? 'Generating PDF...'
+                : backendStatus === 'online'
+                ? 'Download Clinical PDF'
+                : 'Download PDF (Backend)'}
+            </span>
+          </button>
           <button
             onClick={handlePrint}
-            className="print-keep flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors"
+            className="print-keep flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             {t.repPrintBtn} / {t.repPdfBtn}
@@ -259,7 +307,11 @@ export const ComprehensiveReport: React.FC<ComprehensiveReportProps> = ({
         </div>
 
         {/* 6. AI Diagnostic Classification & 7. ICDR Probability Distribution */}
-        <div className="border border-slate-200 rounded-lg p-5 bg-white">
+        <div className="border border-amber-200 rounded-lg p-5 bg-white">
+          <div className="mb-3 px-3 py-2 rounded bg-amber-50 border border-amber-200 text-[11px] text-amber-900 font-medium">
+            <strong>Assistive AI Output (Non-Diagnostic Prototype):</strong>{' '}
+            {aiResult.disclaimer || 'For decision support only; requires clinician verification prior to clinical action.'}
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3 mb-4">
             <div>
               <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500 block">

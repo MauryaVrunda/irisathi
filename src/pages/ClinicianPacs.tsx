@@ -1,20 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useScreening } from '../context/ScreeningContext';
 import { useLanguage } from '../context/LanguageContext';
 import { RetinalWorkstation } from '../components/RetinalWorkstation';
 import { ProbabilityChart } from '../components/ProbabilityChart';
 import { ClinicianSignoff } from '../components/ClinicianSignoff';
 import { ComprehensiveReport } from '../components/ComprehensiveReport';
-import { Stethoscope, Eye, AlertTriangle, CheckCircle, Clock, ArrowRight, ShieldCheck, X } from 'lucide-react';
+import { Stethoscope } from 'lucide-react';
 import { ScreeningCase } from '../types';
 
 export const ClinicianPacs: React.FC = () => {
-  const { cases, saveCase } = useScreening();
+  const { cases, saveCase, submitReviewToBackend, updateReferralInBackend, backendStatus } = useScreening();
   const { t } = useLanguage();
 
   const [selectedCase, setSelectedCase] = useState<ScreeningCase | null>(cases[1] || cases[0]);
   const [activeTab, setActiveTab] = useState<'workstation' | 'report'>('workstation');
   const [filter, setFilter] = useState<'all' | 'priority' | 'referable' | 'normal'>('all');
+  const [referralSaving, setReferralSaving] = useState(false);
+
+  useEffect(() => {
+    if (!selectedCase && cases.length > 0) {
+      setSelectedCase(cases[1] || cases[0]);
+      return;
+    }
+    if (selectedCase) {
+      const updated = cases.find((c) => c.id === selectedCase.id);
+      if (updated && updated !== selectedCase) {
+        setSelectedCase(updated);
+      }
+    }
+  }, [cases, selectedCase]);
 
   const filteredCases = cases.filter((c) => {
     if (filter === 'priority') return c.aiResult?.referralStatus === 'URGENT_REFERRAL';
@@ -27,8 +41,13 @@ export const ClinicianPacs: React.FC = () => {
   const referableCount = cases.filter((c) => c.aiResult?.predictedGrade >= 2).length;
   const normalCount = cases.filter((c) => c.aiResult?.predictedGrade === 0).length;
 
-  const handleSignoffUpdate = (review: any) => {
+  const handleSignoffUpdate = async (review: any) => {
     if (selectedCase) {
+      const synced = await submitReviewToBackend(selectedCase.id, review);
+      if (synced) {
+        setSelectedCase(synced);
+        return;
+      }
       const updated: ScreeningCase = {
         ...selectedCase,
         clinicianReview: review
@@ -36,6 +55,29 @@ export const ClinicianPacs: React.FC = () => {
       saveCase(updated);
       setSelectedCase(updated);
     }
+  };
+
+  const handleReferralStatusChange = async (newStatus: string) => {
+    if (!selectedCase) return;
+    setReferralSaving(true);
+    const synced = await updateReferralInBackend(selectedCase.id, { status: newStatus });
+    if (synced) {
+      setSelectedCase(synced);
+    } else {
+      const updated: ScreeningCase = {
+        ...selectedCase,
+        referralInfo: {
+          priority: selectedCase.referralInfo?.priority || selectedCase.aiResult?.referralStatus || 'REFERABLE_DR',
+          facilityName: selectedCase.referralInfo?.facilityName || 'Navsari District Civil Hospital - Tele-Retina Unit',
+          status: newStatus,
+          dueDate: selectedCase.referralInfo?.dueDate,
+          notes: selectedCase.referralInfo?.notes
+        }
+      };
+      saveCase(updated);
+      setSelectedCase(updated);
+    }
+    setReferralSaving(false);
   };
 
   return (
@@ -211,10 +253,37 @@ export const ClinicianPacs: React.FC = () => {
                     />
 
                     <ClinicianSignoff
+                      key={selectedCase.id}
                       predictedGrade={selectedCase.aiResult.predictedGrade}
                       currentReview={selectedCase.clinicianReview}
                       onSignoff={handleSignoffUpdate}
                     />
+                  </div>
+
+                  {/* Referral Tracking Strip */}
+                  <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div>
+                      <span className="font-bold text-slate-800 uppercase tracking-wider text-[11px] block">
+                        Referral Coordination ({backendStatus === 'online' ? 'Persisted in SQLite' : 'Local Cache'})
+                      </span>
+                      <span className="text-slate-500 font-mono text-[11px]">
+                        Facility: {selectedCase.referralInfo?.facilityName || 'Navsari District Civil Hospital - Tele-Retina Unit'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500 font-mono">Status:</span>
+                      <select
+                        value={selectedCase.referralInfo?.status || 'pending'}
+                        disabled={referralSaving}
+                        onChange={(e) => handleReferralStatusChange(e.target.value)}
+                        className="bg-slate-50 border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800"
+                      >
+                        <option value="pending">Pending</option>
+                        <option value="scheduled">Scheduled</option>
+                        <option value="completed">Completed</option>
+                        <option value="not_required">Not Required</option>
+                      </select>
+                    </div>
                   </div>
                 </>
               ) : (
