@@ -3,10 +3,10 @@ import { useScreening } from '../context/ScreeningContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ComprehensiveReport } from '../components/ComprehensiveReport';
 import { ScreeningCase } from '../types';
-import { Search, Filter, History, Eye, ArrowRight, ShieldCheck, X } from 'lucide-react';
+import { Search, History, RefreshCw } from 'lucide-react';
 
 export const ScreeningHistory: React.FC = () => {
-  const { cases } = useScreening();
+  const { cases, backendStatus, isLoadingCases, refreshCases } = useScreening();
   const { t } = useLanguage();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -64,8 +64,28 @@ export const ScreeningHistory: React.FC = () => {
             <p className="text-xs text-slate-500 mt-0.5">{t.histSubtitle}</p>
           </div>
 
-          <div className="text-xs font-mono text-slate-500">
-            Total Records: <strong className="text-slate-900">{filteredCases.length}</strong>
+          <div className="flex items-center gap-3">
+            <span
+              className={`px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold border ${
+                backendStatus === 'online'
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-amber-50 text-amber-800 border-amber-200'
+              }`}
+            >
+              {backendStatus === 'online' ? 'SQLite API Synced' : 'Offline Local Fallback'}
+            </span>
+            <button
+              type="button"
+              onClick={() => refreshCases()}
+              disabled={isLoadingCases}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg border border-slate-200 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingCases ? 'animate-spin' : ''}`} />
+              <span>Sync</span>
+            </button>
+            <div className="text-xs font-mono text-slate-500">
+              Total Records: <strong className="text-slate-900">{filteredCases.length}</strong>
+            </div>
           </div>
         </div>
 

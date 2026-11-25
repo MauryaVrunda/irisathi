@@ -4,6 +4,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { Patient, QualityAssessment, AIAnalysisResult, EyeSelection, ScreeningCase } from '../types';
 import { SAMPLE_CASES, RETINA_NORMAL_PATH, RETINA_MODERATE_PATH, RETINA_SEVERE_PATH, GRADCAM_MODERATE_PATH, getGradcamForCase } from '../services/sampleData';
 import { analyzeImageQuality } from '../services/imageQuality';
+import { apiQualityCheck, dataUrlToFile } from '../services/api';
 import { QualityGateCard } from '../components/QualityGateCard';
 import { RetinalWorkstation } from '../components/RetinalWorkstation';
 import { ProbabilityChart } from '../components/ProbabilityChart';
@@ -27,8 +28,15 @@ import {
 } from 'lucide-react';
 
 export const NewScreening: React.FC = () => {
-  const { createNewCase, saveCase, loadSampleCase, currentCase, setCurrentCase } = useScreening();
-  const { t, language } = useLanguage();
+  const {
+    createNewCase,
+    saveCase,
+    submitScreeningToBackend,
+    submitReviewToBackend,
+    backendStatus,
+    currentCase
+  } = useScreening();
+  const { t } = useLanguage();
 
   // Workflow steps: 1: demographics, 2: acquisition, 3: quality_gate, 4: ai_workstation, 5: report
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
@@ -56,6 +64,8 @@ export const NewScreening: React.FC = () => {
   const [acquisitionTab, setAcquisitionTab] = useState<'upload' | 'camera' | 'sample'>('sample');
   const [acquiredImageUri, setAcquiredImageUri] = useState<string>(RETINA_MODERATE_PATH);
   const [acquiredGradcamUri, setAcquiredGradcamUri] = useState<string>(SAMPLE_CASES[1]?.gradcamUri || GRADCAM_MODERATE_PATH);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [selectedSampleId, setSelectedSampleId] = useState<string>('sample-2');
   const [imageFileName, setImageFileName] = useState<string>('sample_moderate_npdr.jpg');
   const [imageResolution, setImageResolution] = useState<string>('1536 × 1536 px');
   const [imageFileSize, setImageFileSize] = useState<string>('1.58 MB');
@@ -116,6 +126,9 @@ export const NewScreening: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setUploadedFile(file);
+    setSelectedSampleId('');
+    setActiveAiResult(null);
     setImageFileName(file.name);
     setImageFileSize(`${(file.size / (1024 * 1024)).toFixed(2)} MB`);
 
@@ -174,10 +187,15 @@ export const NewScreening: React.FC = () => {
       if (!ctx) return;
       ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.95);
+      const fname = `cam_capture_${Date.now()}.jpg`;
+      const capturedFile = dataUrlToFile(dataUrl, fname);
+      setUploadedFile(capturedFile);
+      setSelectedSampleId('');
+      setActiveAiResult(null);
       setAcquiredImageUri(dataUrl);
-      setImageFileName(`cam_capture_${Date.now()}.jpg`);
+      setImageFileName(fname);
       setImageResolution(`${canvas.width} × ${canvas.height} px`);
-      setImageFileSize('1.20 MB');
+      setImageFileSize(capturedFile ? `${(capturedFile.size / (1024 * 1024)).toFixed(2)} MB` : '1.20 MB');
       stopCamera();
     } catch (err) {
       console.warn('Frame capture issue:', err);
@@ -205,6 +223,8 @@ export const NewScreening: React.FC = () => {
   // Sample Selection
   const handleSelectSample = (sampleIndex: 0 | 1 | 2) => {
     const s = SAMPLE_CASES[sampleIndex];
+    setUploadedFile(null);
+    setSelectedSampleId(`sample-${sampleIndex + 1}`);
     setAcquiredImageUri(s.imageUri);
     setAcquiredGradcamUri(s.gradcamUri || getGradcamForCase(s));
     setImageFileName(s.imageFileName);
@@ -218,18 +238,29 @@ export const NewScreening: React.FC = () => {
     setIsAssessingQuality(true);
     setStep(3);
 
-    const assessment = await analyzeImageQuality(acquiredImageUri, {
-      qgMetricFundus: t.qgMetricFundus,
-      qgMetricFundusDesc: t.qgMetricFundusDesc,
-      qgMetricFocus: t.qgMetricFocus,
-      qgMetricFocusDesc: t.qgMetricFocusDesc,
-      qgMetricIllumination: t.qgMetricIllumination,
-      qgMetricIlluminationDesc: t.qgMetricIlluminationDesc,
-      qgMetricFov: t.qgMetricFov,
-      qgMetricFovDesc: t.qgMetricFovDesc,
-      qgMetricResolution: t.qgMetricResolution,
-      qgMetricResolutionDesc: t.qgMetricResolutionDesc
-    });
+    let assessment: QualityAssessment | null = null;
+    if (uploadedFile && backendStatus !== 'offline') {
+      try {
+        assessment = await apiQualityCheck(uploadedFile);
+      } catch {
+        assessment = null;
+      }
+    }
+
+    if (!assessment) {
+      assessment = await analyzeImageQuality(acquiredImageUri, {
+        qgMetricFundus: t.qgMetricFundus,
+        qgMetricFundusDesc: t.qgMetricFundusDesc,
+        qgMetricFocus: t.qgMetricFocus,
+        qgMetricFocusDesc: t.qgMetricFocusDesc,
+        qgMetricIllumination: t.qgMetricIllumination,
+        qgMetricIlluminationDesc: t.qgMetricIlluminationDesc,
+        qgMetricFov: t.qgMetricFov,
+        qgMetricFovDesc: t.qgMetricFovDesc,
+        qgMetricResolution: t.qgMetricResolution,
+        qgMetricResolutionDesc: t.qgMetricResolutionDesc
+      });
+    }
 
     setQualityAssessment(assessment);
     setIsAssessingQuality(false);
@@ -248,55 +279,81 @@ export const NewScreening: React.FC = () => {
   };
 
   // Execute AI Pipeline (Step 4)
-  const handleExecuteAiAnalysis = () => {
+  const handleExecuteAiAnalysis = async () => {
     setIsAnalyzing(true);
     setAnalysisProgressStage(1);
 
-    // Multi-stage progress simulation
+    const backendPromise = currentCase
+      ? submitScreeningToBackend({
+          patient: currentCase.patient,
+          eye: currentCase.eye,
+          imageFile: uploadedFile,
+          sampleId: uploadedFile ? undefined : selectedSampleId || 'sample-2',
+          screeningId: currentCase.id
+        })
+      : Promise.resolve(null);
+
     const stages = [1, 2, 3, 4, 5, 6];
-    stages.forEach((stageNum, idx) => {
-      setTimeout(() => {
-        setAnalysisProgressStage(stageNum);
-        if (stageNum === 6) {
-          setIsAnalyzing(false);
-          setStep(4);
+    for (const stageNum of stages) {
+      await new Promise((resolve) => setTimeout(resolve, 260));
+      setAnalysisProgressStage(stageNum);
+    }
 
-          // If activeAiResult not set, match sample 2 or generate compliant structure
-          const chosenResult: AIAnalysisResult = activeAiResult || SAMPLE_CASES[1].aiResult;
-          setActiveAiResult(chosenResult);
+    const persistedCase = await backendPromise;
+    setIsAnalyzing(false);
+    setStep(4);
 
-          const chosenGradcam = acquiredGradcamUri || getGradcamForCase({
-            imageUri: acquiredImageUri,
-            aiResult: chosenResult
-          });
-          setAcquiredGradcamUri(chosenGradcam);
+    if (persistedCase && persistedCase.aiResult) {
+      setActiveAiResult(persistedCase.aiResult);
+      setAcquiredImageUri(persistedCase.imageUri || acquiredImageUri);
+      setAcquiredGradcamUri(
+        persistedCase.gradcamUri ||
+          getGradcamForCase({
+            imageUri: persistedCase.imageUri,
+            aiResult: persistedCase.aiResult
+          })
+      );
+      return;
+    }
 
-          if (currentCase) {
-            const updated: ScreeningCase = {
-              ...currentCase,
-              imageUri: acquiredImageUri,
-              gradcamUri: chosenGradcam,
-              imageFileName,
-              imageResolution,
-              imageFileSize,
-              quality: qualityAssessment || SAMPLE_CASES[1].quality,
-              aiResult: chosenResult,
-              followUps: SAMPLE_CASES[1].followUps
-            };
-            saveCase(updated);
-          }
-        }
-      }, (idx + 1) * 350);
-    });
-  };
+    // Graceful offline fallback
+    const chosenResult: AIAnalysisResult = activeAiResult || SAMPLE_CASES[1].aiResult;
+    setActiveAiResult(chosenResult);
 
-  const handleClinicianSignoffComplete = (review: any) => {
+    const chosenGradcam =
+      acquiredGradcamUri ||
+      getGradcamForCase({
+        imageUri: acquiredImageUri,
+        aiResult: chosenResult
+      });
+    setAcquiredGradcamUri(chosenGradcam);
+
     if (currentCase) {
       const updated: ScreeningCase = {
         ...currentCase,
-        clinicianReview: review
+        imageUri: acquiredImageUri,
+        gradcamUri: chosenGradcam,
+        imageFileName,
+        imageResolution,
+        imageFileSize,
+        quality: qualityAssessment || SAMPLE_CASES[1].quality,
+        aiResult: chosenResult,
+        followUps: SAMPLE_CASES[1].followUps
       };
       saveCase(updated);
+    }
+  };
+
+  const handleClinicianSignoffComplete = async (review: any) => {
+    if (currentCase) {
+      const synced = await submitReviewToBackend(currentCase.id, review);
+      if (!synced) {
+        const updated: ScreeningCase = {
+          ...currentCase,
+          clinicianReview: review
+        };
+        saveCase(updated);
+      }
       setStep(5); // Proceed to Final Report
     }
   };
